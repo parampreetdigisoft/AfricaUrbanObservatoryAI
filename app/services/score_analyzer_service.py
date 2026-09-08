@@ -7,7 +7,7 @@ import math
 import logging
 from typing import Any, Optional
 from app.services.core.repository import DatabaseRepository
-from app.services.common.veridian_ai_research_service import VerdianAIResearchService
+from app.services.common.african_ai_research_service import VerdianAIResearchService
 from app.services.rag_query_service import rag_query_service
 
 logger = logging.getLogger(__name__)

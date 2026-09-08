@@ -169,15 +169,15 @@ async def get_emerging_trends_and_issues(
         default=8,
         ge=1,
         le=250,
-        description="Number of GDELT articles to fetch (maxrecords); one card per African city article.",
+        description="GDELT maxrecords (DOC 2.0 cap 250). Default 75 on GDELT; we send at least 75.",
     ),
     queryVariant: Optional[int] = Query(
         default=None,
         ge=0,
         description=(
-            "GDELT keyword variant index (0–5). Omit to auto-rotate every 5 minutes. "
-            "Each variant uses a different 2–3 keyword OR group, or all six terms. "
-            "Results are restricted to African cities."
+            "Topic term index (0–7: urban, city, protest, flood, election, economy, health, security). "
+            "Omit to auto-rotate every 2 minutes. African sourcecountry batches also rotate every 2 minutes "
+            "so 2-min or 10-min polling does not send the same GDELT URL."
         ),
     ),
 ):

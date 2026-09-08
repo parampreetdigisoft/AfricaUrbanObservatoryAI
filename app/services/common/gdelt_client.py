@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # GDELT: "Please limit requests to one every 5 seconds"
 GDELT_MIN_REQUEST_INTERVAL_SEC = 5.25
-GDELT_RESPONSE_CACHE_TTL_SEC = 300
+GDELT_RESPONSE_CACHE_TTL_SEC = 90
 GDELT_MAX_RETRIES = 2
 
 _lock = asyncio.Lock()
@@ -65,7 +65,8 @@ async def fetch_doc_articles(url: str, cache_key: Optional[str] = None) -> List[
     """
     GET a GDELT doc API URL and return the articles list.
 
-    Uses process-wide throttling, optional 5-minute cache, and limited retries on 429.
+    Uses process-wide throttling (min 5s between GDELT calls), optional 90-second cache,
+    and limited retries on 429.
     """
     if cache_key:
         cached = _cache_get(cache_key)

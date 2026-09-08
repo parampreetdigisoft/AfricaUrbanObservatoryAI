@@ -564,17 +564,24 @@ class RAGQueryService:
             # ---------------------------------------------------------
             # Fetch articles from GDELT (last 24h, English, African cities)
             # ---------------------------------------------------------
+            # GDELT default maxrecords is 75; cap at 250 per DOC 2.0 docs.
+            fetch_count = min(250, max(max_records, 75))
             articles_raw = await self._fetch_gdelt_emerging_articles(
-                max_records, query_variant=query_variant
+                fetch_count,
+                query_variant=query_variant,
+                now_utc=now_utc,
             )
             # Only trust these fields from GDELT; LLM fills rest (country/region/code/etc).
             articles: List[Dict[str, Any]] = []
-            for a in articles_raw[:max_records]:
+            for a in articles_raw:
                 if not isinstance(a, dict):
                     continue
                 url = str(a.get("url", "")).strip()
                 title = str(a.get("title", "")).strip()
                 if not url.startswith(("http://", "https://")) or not title:
+                    continue
+                sourcecountry = str(a.get("sourcecountry", "")).strip()
+                if not VerdianPromptTemplates.is_african_news_article(title, sourcecountry):
                     continue
 
                 articles.append(
@@ -584,10 +591,12 @@ class RAGQueryService:
                         "seendate": str(a.get("seendate", "")).strip(),
                         "domain": str(a.get("domain", "")).strip(),
                         "language": str(a.get("language", "")).strip(),
-                        "sourcecountry": str(a.get("sourcecountry", "")).strip(),
+                        "sourcecountry": sourcecountry,
                         "socialimage": str(a.get("socialimage", "")).strip(),
                     }
                 )
+                if len(articles) >= max_records:
+                    break
 
             if not articles:
                 raise ValueError("Insufficient usable GDELT articles")
@@ -625,6 +634,8 @@ class RAGQueryService:
                         country=str(c.get("country", "")),
                         country_code=str(c.get("countryCode", "")),
                         region=str(c.get("region", "")),
+                        city=str(c.get("city", "")),
+                        title=t,
                     ):
                         continue
                     cleaned_cards.append(c)
@@ -702,40 +713,61 @@ class RAGQueryService:
         self,
         max_records: int,
         query_variant: Optional[int] = None,
+        now_utc: Optional[datetime] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Fetch GDELT articles (one variant per request, 5s throttle between calls).
-        Tries at most two variants if the first returns no articles.
+        One GDELT DOC 2.0 ArtList call (5s throttle). Unique URL per 2-minute poll.
+        Tries the next African sourcecountry group if the first returns nothing.
         """
+        now = now_utc or datetime.now(timezone.utc)
         variant_count = VerdianPromptTemplates.gdelt_emerging_variant_count()
+        group_count = VerdianPromptTemplates.gdelt_africa_group_count()
         start_idx = (
             query_variant
             if query_variant is not None
             else VerdianPromptTemplates.pick_gdelt_emerging_variant_index()
         ) % variant_count
+        start_group = VerdianPromptTemplates.pick_gdelt_africa_group_index()
 
         last_error: Optional[Exception] = None
-        max_variant_tries = 2 if query_variant is None else 1
+        max_tries = 2 if query_variant is None else 1
 
-        for attempt in range(max_variant_tries):
-            idx = (start_idx + attempt) % variant_count
+        for attempt in range(max_tries):
+            idx = start_idx
+            group_idx = (start_group + attempt) % group_count
             gdelt_url, _ = VerdianPromptTemplates.emerging_trends_gdelt_url(
-                max_records, variant_index=idx
+                max_records,
+                variant_index=idx,
+                country_group_index=group_idx,
+                now_utc=now,
             )
-            cache_key = f"emerging:{max_records}:{idx}"
+            cache_key = (
+                f"emerging:africa-sc:{max_records}:{idx}:{group_idx}:"
+                f"{now.strftime('%Y%m%d%H%M')}"
+            )
 
             try:
+                logger.info("GDELT emerging-trends request: %s", gdelt_url)
                 articles_raw = await fetch_doc_articles(gdelt_url, cache_key=cache_key)
-                if articles_raw:
+                african_hits = [
+                    a
+                    for a in (articles_raw or [])
+                    if isinstance(a, dict)
+                    and VerdianPromptTemplates.is_african_news_article(
+                        str(a.get("title", "")),
+                        str(a.get("sourcecountry", "")),
+                    )
+                ]
+                if african_hits:
                     return articles_raw
                 logger.warning(
-                    "GDELT variant %s returned no articles",
-                    idx,
+                    "GDELT country-group %s returned no African-outlet articles",
+                    group_idx,
                 )
             except Exception as exc:
                 last_error = exc
-                logger.warning("GDELT fetch failed for variant %s: %s", idx, exc)
-                if attempt + 1 >= max_variant_tries:
+                logger.warning("GDELT fetch failed for country-group %s: %s", group_idx, exc)
+                if attempt + 1 >= max_tries:
                     raise
 
         if last_error:

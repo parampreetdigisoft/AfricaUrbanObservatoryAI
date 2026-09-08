@@ -354,6 +354,8 @@ class ChatService:
                 country=str(item.get("country", "")),
                 country_code=str(item.get("countryCode", "")),
                 region=str(item.get("region", "")),
+                city=str(item.get("city", "")),
+                title=str(item.get("title", "")),
             ):
                 continue
 

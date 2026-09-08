@@ -432,4 +432,4 @@ class VerdianAIResearchService:
         
 
 # Singleton instance
-veridian_ai_research_service = VerdianAIResearchService()
+african_ai_research_service = VerdianAIResearchService()

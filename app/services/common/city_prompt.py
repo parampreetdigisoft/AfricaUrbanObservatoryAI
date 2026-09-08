@@ -3,7 +3,8 @@ African Urban Index Prompt Templates — Static class holding ALL system prompts
 Import this wherever a prompt is needed; never inline prompts in service files.
 """
 
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Sequence, Tuple
 from urllib.parse import quote
 
@@ -1880,7 +1881,9 @@ class VerdianPromptTemplates:
         - region MUST be an African subregion (North Africa, West Africa, East Africa,
           Central Africa, or Southern Africa).
         - NEVER output cities in Europe, Asia, the Americas, Oceania, or the Middle East
-          outside North Africa (e.g. London, Singapore, New York, Dubai).
+          outside North Africa (e.g. India, Mumbai, Delhi, London, Singapore, New York, Dubai).
+        - SKIP any article whose headline is about India, Pakistan, China, Ukraine, the US,
+          Europe, or any other non-African country — even if Africa is mentioned in passing.
         - If an article is not about an African city or African urban system, SKIP it.
 
         ==================================================
@@ -2019,8 +2022,11 @@ class VerdianPromptTemplates:
         {articles_json}
 
         For each article:
-        - Create a card ONLY if the story is about an African city or African urban system.
-        - Skip articles about non-African cities (London, Singapore, New York, Dubai, etc.).
+        - These articles were published by African news outlets (GDELT sourcecountry).
+        - Map each article to an African city. Use sourcecountry as the country when the
+          headline does not name a city.
+        - SKIP India, Mumbai, Delhi, Pakistan, China, Ukraine, London, Singapore, Dubai,
+          and any other non-African place.
         - Infer African country, countryCode, region (African subregion), category, status,
           urgency, color, icon, city, cityCode and summary from its title and sourcecountry field.
         - Choose category/status/urgency/color consistently with the headline and story type.
@@ -2028,7 +2034,34 @@ class VerdianPromptTemplates:
         Now return the JSON output.
         """.strip()
 
-    # ISO 3166-1 alpha-2 for African countries (including Western Sahara).
+    
+    # GDELT DOC 2.0: sourcecountry uses FIPS-10 codes (not ISO 3166).
+    # Nigeria=NI, Niger=NG, South Africa=SF, Gabon=GB. See GDELT Country Lookup.
+    # Rotate groups so 2-minute / 10-minute polls are not identical requests.
+    GDELT_AFRICA_SOURCECOUNTRY_GROUPS: Tuple[Tuple[str, ...], ...] = (
+        ("NI", "GH", "IV", "SG", "GV", "SL", "LR", "BN"),
+        ("UV", "ML", "NG", "TO", "GA", "MR", "PU", "CM"),
+        ("KE", "TZ", "UG", "ET", "RW", "SO", "DJ", "ER"),
+        ("SF", "MZ", "ZI", "ZA", "WA", "BC", "MI", "LT"),
+        ("CG", "CF", "AO", "GB", "CD", "CT", "BY", "EK"),
+        ("EG", "MO", "AG", "TS", "LY", "SU", "OD", "WI"),
+        ("MA", "MP", "SE", "CV", "CN", "TP", "WZ", "UG"),
+    )
+
+    # Single topic words (AND, not a nested OR) so each poll URL differs.
+    GDELT_EMERGING_TOPIC_TERMS: Tuple[str, ...] = (
+        "urban",
+        "city",
+        "protest",
+        "flood",
+        "election",
+        "economy",
+        "health",
+        "security",
+    )
+
+    GDELT_POLL_BUCKET_SEC = 120
+
     AFRICAN_COUNTRY_ISO2 = {
         "algeria": "DZ",
         "angola": "AO",
@@ -2103,6 +2136,10 @@ class VerdianPromptTemplates:
 
     AFRICAN_ISO2 = frozenset(AFRICAN_COUNTRY_ISO2.values())
 
+    AFRICAN_FIPS = frozenset(
+        code for group in GDELT_AFRICA_SOURCECOUNTRY_GROUPS for code in group
+    )
+
     AFRICAN_REGION_ALIASES = frozenset({
         "africa",
         "north africa",
@@ -2117,26 +2154,58 @@ class VerdianPromptTemplates:
         "maghreb",
     })
 
-    # Compact GDELT geo clause — topic keywords, not publisher sourcecountry
-    # (BBC/Reuters often report African cities from non-African outlets).
-    GDELT_AFRICA_GEO_QUERY = (
-        "Africa OR African OR Nigeria OR Kenya OR Ghana OR Ethiopia OR Egypt OR "
-        "Tanzania OR Uganda OR Morocco OR Senegal OR Rwanda OR Cameroon OR Angola OR "
-        "Tunisia OR Sudan OR Zimbabwe OR Zambia OR Mozambique OR Algeria OR "
-        "Botswana OR Namibia OR Mali OR Libya OR Somalia OR "
-        '"South Africa" OR "Ivory Coast" OR "DR Congo" OR "Cape Town" OR '
-        "Lagos OR Nairobi OR Accra OR Cairo OR Johannesburg OR Kigali OR Dakar OR "
-        "Addis OR Kinshasa OR Kampala OR Casablanca OR Abidjan"
+    AFRICAN_GEO_PHRASES = (
+        "south africa", "south sudan", "ivory coast", "cote d'ivoire",
+        "cape verde", "cabo verde", "burkina faso", "sierra leone",
+        "guinea-bissau", "guinea bissau", "equatorial guinea",
+        "central african republic", "western sahara", "sao tome",
+        "dr congo", "democratic republic of the congo",
+        "cape town", "addis ababa", "dar es salaam", "port louis",
+        "port harcourt", "ouagadougou", "north africa", "west africa",
+        "east africa", "central africa", "southern africa",
+        "sub-saharan africa",
     )
 
-    GDELT_EMERGING_KEYWORD_VARIANTS: Tuple[Tuple[str, ...], ...] = (
-        ("war", "conflict"),
-        ("terrorism", "protest"),
-        ("sanctions", "military"),
-        ("war", "conflict", "terrorism"),
-        ("protest", "sanctions", "military"),
-        ("war", "conflict", "terrorism", "protest", "sanctions", "military"),
+    AFRICAN_GEO_WORDS = frozenset({
+        "africa", "african",
+        "algeria", "angola", "benin", "botswana", "burundi", "cameroon",
+        "chad", "comoros", "congo", "djibouti", "egypt", "eritrea",
+        "eswatini", "ethiopia", "gabon", "gambia", "ghana", "guinea",
+        "kenya", "lesotho", "liberia", "libya", "madagascar", "malawi",
+        "mali", "mauritania", "mauritius", "morocco", "mozambique",
+        "namibia", "niger", "nigeria", "rwanda", "senegal", "seychelles",
+        "somalia", "sudan", "swaziland", "tanzania", "togo", "tunisia",
+        "uganda", "zambia", "zimbabwe",
+        "lagos", "abuja", "kano", "ibadan", "nairobi", "mombasa",
+        "accra", "kumasi", "cairo", "alexandria", "johannesburg", "pretoria",
+        "durban", "soweto", "kinshasa", "lubumbashi", "casablanca", "rabat",
+        "tunis", "algiers", "dakar", "abidjan", "kampala", "lusaka",
+        "harare", "maputo", "luanda", "kigali", "khartoum", "mogadishu",
+        "bamako", "conakry", "freetown", "monrovia", "antananarivo",
+        "windhoek", "gaborone", "yaounde", "douala", "brazzaville",
+        "addis", "gqeberha", "bloemfontein", "enugu", "kaduna", "tamale",
+        "kisumu", "entebbe",
+    })
+
+    NON_AFRICAN_GEO_PHRASES = (
+        "new delhi", "new york", "united states", "united kingdom",
+        "sri lanka", "hong kong", "saudi arabia", "south korea",
+        "papua new guinea",
     )
+
+    NON_AFRICAN_GEO_WORDS = frozenset({
+        "india", "indian", "mumbai", "delhi", "bangalore", "bengaluru",
+        "hyderabad", "chennai", "kolkata", "calcutta", "pune", "kashmir",
+        "pakistan", "islamabad", "karachi", "lahore",
+        "china", "beijing", "shanghai", "ukraine", "kyiv", "kiev",
+        "russia", "moscow", "israel", "gaza", "iran", "afghanistan",
+        "bangladesh", "dhaka", "nepal", "myanmar", "thailand", "vietnam",
+        "philippines", "japan", "tokyo", "korea", "taiwan", "australia",
+        "sydney", "brazil", "mexico", "canada", "germany", "france",
+        "spain", "italy", "london", "paris", "singapore", "washington",
+        "britain", "england", "dubai", "qatar", "iraq", "syria", "yemen",
+        "turkey", "istanbul", "indonesia", "jakarta",
+    })
 
     @classmethod
     def _normalize_country_name(cls, country: str) -> str:
@@ -2155,72 +2224,177 @@ class VerdianPromptTemplates:
                 n = n[len(prefix):]
         return n.replace(".", "").replace(",", "").strip()
 
+    @staticmethod
+    def _normalize_geo_text(*parts: str) -> str:
+        text = " ".join(str(p or "") for p in parts).lower()
+        text = text.replace("indian ocean", " ")
+        return re.sub(r"[^a-z0-9'\-\s]", " ", text)
+
+    @classmethod
+    def _has_phrase_or_word(cls, text: str, phrases: Sequence[str], words) -> bool:
+        if not text:
+            return False
+        padded = f" {text} "
+        for phrase in phrases:
+            if phrase and f" {phrase} " in padded:
+                return True
+        for word in words:
+            if word and re.search(rf"\b{re.escape(word)}\b", text):
+                return True
+        return False
+
+    @classmethod
+    def _has_african_geo(cls, text: str) -> bool:
+        return cls._has_phrase_or_word(
+            text, cls.AFRICAN_GEO_PHRASES, cls.AFRICAN_GEO_WORDS
+        )
+
+    @classmethod
+    def _has_non_african_geo(cls, text: str) -> bool:
+        return cls._has_phrase_or_word(
+            text, cls.NON_AFRICAN_GEO_PHRASES, cls.NON_AFRICAN_GEO_WORDS
+        )
+
+    @classmethod
+    def is_african_source_country(cls, sourcecountry: str) -> bool:
+        """True when GDELT sourcecountry is an African outlet (name or FIPS)."""
+        raw = (sourcecountry or "").strip()
+        if not raw:
+            return False
+        code = raw.upper()
+        if len(code) == 2 and code in cls.AFRICAN_FIPS:
+            return True
+        n = cls._normalize_country_name(raw)
+        if n in cls.AFRICAN_COUNTRY_ISO2:
+            return True
+        compact = n.replace(" ", "").replace("-", "")
+        return compact in {
+            "southafrica", "southsudan", "ivorycoast", "cotedivoire",
+            "centralafricanrepublic", "sierraleone", "equatorialguinea",
+            "guineabissau", "democraticrepublicofthecongo", "westernsahara",
+            "saotomeandprincipe", "capeverde", "burkinafaso",
+        }
+
+    @classmethod
+    def is_african_news_article(cls, title: str, sourcecountry: str = "") -> bool:
+        """Keep African-outlet articles; drop India/Asia/etc. headlines."""
+        text = cls._normalize_geo_text(title)
+        if text and cls._has_non_african_geo(text):
+            return False
+        if cls.is_african_source_country(sourcecountry):
+            return True
+        return bool(text) and cls._has_african_geo(text)
+
     @classmethod
     def is_african_city_card(
         cls,
         country: str = "",
         country_code: str = "",
         region: str = "",
+        city: str = "",
+        title: str = "",
     ) -> bool:
-        """True when the card is an African country / African subregion."""
-        code = (country_code or "").strip().upper()
-        if len(code) == 2:
-            return code in cls.AFRICAN_ISO2
-
-        country_raw = (country or "").strip().lower()
-        if country_raw in cls.AFRICAN_COUNTRY_ISO2:
-            return True
-
-        country_n = cls._normalize_country_name(country)
-        if country_n in cls.AFRICAN_COUNTRY_ISO2:
-            return True
-
-        if country_raw:
+        """True when the card is an African country/city and not India/etc."""
+        if cls._has_non_african_geo(cls._normalize_geo_text(title, city, country, region)):
             return False
 
+        code = (country_code or "").strip().upper()
+        country_raw = (country or "").strip().lower()
+        country_n = cls._normalize_country_name(country)
         region_n = (region or "").strip().lower()
-        return region_n in cls.AFRICAN_REGION_ALIASES
+
+        country_is_african = (
+            (len(code) == 2 and (code in cls.AFRICAN_ISO2 or code in cls.AFRICAN_FIPS))
+            or country_raw in cls.AFRICAN_COUNTRY_ISO2
+            or country_n in cls.AFRICAN_COUNTRY_ISO2
+            or region_n in cls.AFRICAN_REGION_ALIASES
+            or cls.is_african_source_country(country)
+        )
+        return country_is_african
+
+    @staticmethod
+    def _gdelt_poll_bucket() -> int:
+        """2-minute UTC bucket so 2-min and 10-min polls send different GDELT URLs."""
+        return int(datetime.now(timezone.utc).timestamp()) // VerdianPromptTemplates.GDELT_POLL_BUCKET_SEC
 
     @staticmethod
     def gdelt_emerging_variant_count() -> int:
-        return len(VerdianPromptTemplates.GDELT_EMERGING_KEYWORD_VARIANTS)
+        return len(VerdianPromptTemplates.GDELT_EMERGING_TOPIC_TERMS)
+
+    @staticmethod
+    def gdelt_africa_group_count() -> int:
+        return len(VerdianPromptTemplates.GDELT_AFRICA_SOURCECOUNTRY_GROUPS)
 
     @staticmethod
     def pick_gdelt_emerging_variant_index() -> int:
-        """Rotate variant every 5 minutes (UTC) so repeated calls are not identical."""
-        bucket = int(datetime.now(timezone.utc).timestamp()) // 300
-        return bucket % VerdianPromptTemplates.gdelt_emerging_variant_count()
+        """Rotate topic every 2 minutes (UTC)."""
+        return VerdianPromptTemplates._gdelt_poll_bucket() % VerdianPromptTemplates.gdelt_emerging_variant_count()
 
     @staticmethod
-    def _gdelt_emerging_query_string(keywords: Sequence[str]) -> str:
-        inner = " OR ".join(k.strip() for k in keywords if k and k.strip())
-        africa = VerdianPromptTemplates.GDELT_AFRICA_GEO_QUERY
-        return f"({inner}) ({africa}) sourcelang:english"
+    def pick_gdelt_africa_group_index() -> int:
+        """Rotate African sourcecountry batch every 2 minutes (UTC)."""
+        return VerdianPromptTemplates._gdelt_poll_bucket() % VerdianPromptTemplates.gdelt_africa_group_count()
+
+    @staticmethod
+    def _gdelt_emerging_query_string(
+        topic: str,
+        source_countries: Sequence[str],
+    ) -> str:
+        """
+        Official DOC 2.0 QUERY string:
+        one (a OR b) sourcecountry block (not nested), optional topic AND, sourcelang, exclusions.
+        """
+        countries = [c.strip().upper() for c in source_countries if c and c.strip()]
+        country_or = " OR ".join(f"sourcecountry:{c.lower()}" for c in countries)
+        topic_term = (topic or "").strip()
+        parts = [f"({country_or})"]
+        if topic_term:
+            parts.append(topic_term)
+        parts.append("sourcelang:english")
+        parts.append("-India -Mumbai -Delhi")
+        return " ".join(parts)
 
     @staticmethod
     def emerging_trends_gdelt_url(
         max_records: int,
         variant_index: Optional[int] = None,
+        country_group_index: Optional[int] = None,
+        now_utc: Optional[datetime] = None,
     ) -> Tuple[str, int]:
         """
-        Build GDELT Doc API URL (last 24h, English, African cities/countries only).
+        Build GDELT DOC 2.0 ArtList URL for African sourcecountry outlets.
 
-        Returns (url, variant_index_used). Each variant uses a different keyword subset.
+        Unique per poll via rotating country batch, topic, and STARTDATETIME/ENDDATETIME.
         """
-        variants = VerdianPromptTemplates.GDELT_EMERGING_KEYWORD_VARIANTS
-        n_variants = len(variants)
+        now = now_utc or datetime.now(timezone.utc)
+        topics = VerdianPromptTemplates.GDELT_EMERGING_TOPIC_TERMS
+        groups = VerdianPromptTemplates.GDELT_AFRICA_SOURCECOUNTRY_GROUPS
+        bucket = int(now.timestamp()) // VerdianPromptTemplates.GDELT_POLL_BUCKET_SEC
+
         if variant_index is None:
-            idx = VerdianPromptTemplates.pick_gdelt_emerging_variant_index()
+            idx = bucket % len(topics)
         else:
-            idx = int(variant_index) % n_variants
+            idx = int(variant_index) % len(topics)
+
+        if country_group_index is None:
+            group_idx = bucket % len(groups)
+        else:
+            group_idx = int(country_group_index) % len(groups)
 
         n = max(1, min(250, int(max_records)))
-        query = VerdianPromptTemplates._gdelt_emerging_query_string(variants[idx])
+        query = VerdianPromptTemplates._gdelt_emerging_query_string(
+            topics[idx], groups[group_idx]
+        )
         encoded_query = quote(query, safe="")
+
+        end_dt = now.strftime("%Y%m%d%H%M%S")
+        start_dt = (now - timedelta(hours=24)).strftime("%Y%m%d%H%M%S")
 
         url = (
             "https://api.gdeltproject.org/api/v2/doc/doc"
             f"?query={encoded_query}"
-            f"&mode=ArtList&maxrecords={n}&format=json&timespan=24h&sort=DateDesc"
+            f"&mode=artlist&maxrecords={n}&format=json"
+            f"&sort=datedesc"
+            f"&startdatetime={start_dt}&enddatetime={end_dt}"
         )
         return url, idx
