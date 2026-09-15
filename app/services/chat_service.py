@@ -282,14 +282,18 @@ class ChatService:
     def _normalize_emerging_trends_payload(data: Dict[str, Any]) -> Dict[str, Any]:
         category_map = {
             "governance": "Governance",
-            "conflict": "Conflict",
+            "infrastructure": "Infrastructure",
             "economy": "Economy",
             "climate": "Climate",
             "security": "Security",
-            "migration": "Migration",
+            "conflict": "Security",
+            "mobility": "Mobility",
             "society": "Society",
+            "migration": "Society",
             "technology": "Technology",
-            "health": "Health",
+            "housing": "Housing",
+            "environment": "Environment",
+            "health": "Society",
         }
         status_map = {
             "rising": "Rising",
@@ -300,14 +304,18 @@ class ChatService:
         }
         icon_map = {
             "governance": "governance",
-            "conflict": "conflict",
+            "infrastructure": "infrastructure",
             "economy": "economy",
             "climate": "climate",
             "security": "security",
-            "migration": "migration",
+            "conflict": "security",
+            "mobility": "mobility",
             "society": "society",
+            "migration": "society",
             "technology": "technology",
-            "health": "health",
+            "housing": "housing",
+            "environment": "environment",
+            "health": "society",
         }
 
         cities_raw = data.get("cities") or []
@@ -330,6 +338,8 @@ class ChatService:
 
             icon = str(item.get("icon", category_key or "governance")).strip().lower()
             icon = icon_map.get(icon, icon_map.get(category_key, "governance"))
+            if icon not in icon_map.values():
+                icon = "governance"
 
             urgency = str(item.get("urgency", "medium")).strip().lower()
             card_type = str(item.get("type", "risk")).strip().lower()
@@ -359,15 +369,26 @@ class ChatService:
             ):
                 continue
 
+            if not VerdianPromptTemplates.is_urban_relevant_article(
+                str(item.get("title", "")),
+                city=str(item.get("city", "")),
+                category=category,
+            ):
+                continue
+
             title = ChatService._strip_source_mentions(
                 str(item.get("title", "")).strip()
             )
             summary = ChatService._strip_source_mentions(summary)
+            city_name = str(item.get("city", "")).strip()
+            city_code = str(item.get("cityCode", "")).strip().upper()[:4]
+            if len(city_code) < 2:
+                city_code = (city_name[:3] if city_name else "NA").upper()
 
             normalized_cities.append(
                 {
-                    "city": str(item.get("city", "")).strip(),
-                    "cityCode": str(item.get("cityCode", "")).strip().upper()[:2],
+                    "city": city_name,
+                    "cityCode": city_code,
                     "country": str(item.get("country", "")).strip(), 
                     "region": str(item.get("region", "")).strip(),
                     "type": card_type if card_type in ("risk", "trend") else "risk",

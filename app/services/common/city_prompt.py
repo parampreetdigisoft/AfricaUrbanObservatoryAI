@@ -4,7 +4,7 @@ Import this wherever a prompt is needed; never inline prompts in service files.
 """
 
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional, Sequence, Tuple
 from urllib.parse import quote
 
@@ -1262,8 +1262,8 @@ class VerdianPromptTemplates:
             **Layer 2 — Five-year structural trend ({_year_minus_5}–{_year}):**
             Establish how urban conditions evolved over roughly the last five years using institutional
             and longitudinal sources: UN-Habitat World Cities Report trend lines, OECD Cities Outlook,
-            World Bank urban development datasets, IMD Smart City Index trajectories, WHO urban health
-            reports, municipal annual performance reviews. Name the direction of change (improving,
+            World Bank urban development datasets, IMD Smart City Index trajectories, 
+            municipal annual performance reviews. Name the direction of change (improving,
             deteriorating, volatile).
 
             **Layer 3 — Last six months to {_full_date} (current intelligence):**
@@ -1991,7 +1991,6 @@ class VerdianPromptTemplates:
         - Mobility
         - Society
         - Technology
-        - Health
         - Housing
         - Environment
 
@@ -2025,8 +2024,6 @@ class VerdianPromptTemplates:
         - These articles were published by African news outlets (GDELT sourcecountry).
         - Map each article to an African city. Use sourcecountry as the country when the
           headline does not name a city.
-        - SKIP India, Mumbai, Delhi, Pakistan, China, Ukraine, London, Singapore, Dubai,
-          and any other non-African place.
         - Infer African country, countryCode, region (African subregion), category, status,
           urgency, color, icon, city, cityCode and summary from its title and sourcecountry field.
         - Choose category/status/urgency/color consistently with the headline and story type.
@@ -2048,17 +2045,43 @@ class VerdianPromptTemplates:
         ("MA", "MP", "SE", "CV", "CN", "TP", "WZ", "UG"),
     )
 
-    # Single topic words (AND, not a nested OR) so each poll URL differs.
+    # Rotate a short urban-Africa keyword query each poll (GDELT DOC 2.0 QUERY field).
+    # Do not put sourcecountry lists, language filters, or start/end datetimes in the URL.
     GDELT_EMERGING_TOPIC_TERMS: Tuple[str, ...] = (
-        "urban",
-        "city",
-        "protest",
-        "flood",
-        "election",
-        "economy",
-        "health",
-        "security",
+        "Africa urban",
+        '"African cities"',
+        "Africa housing",
+        "Africa infrastructure",
+        "Africa flood",
+        "Africa municipality",
+        '"public transport" Africa',
+        '"informal settlement" Africa',
     )
+
+    GDELT_TIMESPAN = "1week"
+
+    URBAN_STORY_PHRASES = (
+        "urban area", "smart city", "city council", "municipal services",
+        "public transport", "waste management", "informal settlement",
+    )
+
+    URBAN_STORY_WORDS = frozenset({
+        "urban", "city", "cities", "municipal", "municipality", "metro",
+        "metropolitan", "township", "housing", "infrastructure", "transport",
+        "traffic", "mayor", "council", "drainage", "sanitation", "flood",
+        "flooding", "slum", "roads", "transit", "commuter",
+    })
+
+    HEALTH_STORY_PHRASES = (
+        "ministry of health", "world health", "health care", "public health",
+    )
+
+    HEALTH_STORY_WORDS = frozenset({
+        "hospital", "hospitals", "vaccine", "vaccination", "malaria", "hiv",
+        "aids", "cholera", "ebola", "outbreak", "epidemic", "pandemic",
+        "clinic", "clinics", "disease", "patient", "patients", "healthcare",
+        "immunisation", "immunization", "infection", "virus", "maternal",
+    })
 
     GDELT_POLL_BUCKET_SEC = 120
 
@@ -2262,7 +2285,7 @@ class VerdianPromptTemplates:
         if not raw:
             return False
         code = raw.upper()
-        if len(code) == 2 and code in cls.AFRICAN_FIPS:
+        if len(code) == 2 and (code in cls.AFRICAN_FIPS or code in cls.AFRICAN_ISO2):
             return True
         n = cls._normalize_country_name(raw)
         if n in cls.AFRICAN_COUNTRY_ISO2:
@@ -2284,6 +2307,20 @@ class VerdianPromptTemplates:
         if cls.is_african_source_country(sourcecountry):
             return True
         return bool(text) and cls._has_african_geo(text)
+
+    @classmethod
+    def is_urban_relevant_article(cls, title: str, city: str = "", category: str = "") -> bool:
+        """Drop health-observatory stories that are not about cities/urban systems."""
+        text = cls._normalize_geo_text(title, city, category)
+        has_urban = cls._has_phrase_or_word(
+            text, cls.URBAN_STORY_PHRASES, cls.URBAN_STORY_WORDS
+        )
+        has_health = cls._has_phrase_or_word(
+            text, cls.HEALTH_STORY_PHRASES, cls.HEALTH_STORY_WORDS
+        )
+        if has_health and not has_urban:
+            return False
+        return True
 
     @classmethod
     def is_african_city_card(
@@ -2332,27 +2369,14 @@ class VerdianPromptTemplates:
 
     @staticmethod
     def pick_gdelt_africa_group_index() -> int:
-        """Rotate African sourcecountry batch every 2 minutes (UTC)."""
+        """Kept for callers; country lists are no longer sent in the GDELT URL."""
         return VerdianPromptTemplates._gdelt_poll_bucket() % VerdianPromptTemplates.gdelt_africa_group_count()
 
     @staticmethod
-    def _gdelt_emerging_query_string(
-        topic: str,
-        source_countries: Sequence[str],
-    ) -> str:
-        """
-        Official DOC 2.0 QUERY string:
-        one (a OR b) sourcecountry block (not nested), optional topic AND, sourcelang, exclusions.
-        """
-        countries = [c.strip().upper() for c in source_countries if c and c.strip()]
-        country_or = " OR ".join(f"sourcecountry:{c.lower()}" for c in countries)
-        topic_term = (topic or "").strip()
-        parts = [f"({country_or})"]
-        if topic_term:
-            parts.append(topic_term)
-        parts.append("sourcelang:english")
-        parts.append("-India -Mumbai -Delhi")
-        return " ".join(parts)
+    def _gdelt_emerging_query_string(topic: str) -> str:
+        """Project keyword query only — no sourcecountry, language, or geo exclusions."""
+        query = (topic or "Africa urban").strip()
+        return query or "Africa urban"
 
     @staticmethod
     def emerging_trends_gdelt_url(
@@ -2362,13 +2386,14 @@ class VerdianPromptTemplates:
         now_utc: Optional[datetime] = None,
     ) -> Tuple[str, int]:
         """
-        Build GDELT DOC 2.0 ArtList URL for African sourcecountry outlets.
+        Build a short GDELT DOC 2.0 ArtList URL (free API).
 
-        Unique per poll via rotating country batch, topic, and STARTDATETIME/ENDDATETIME.
+        Docs pattern: query + mode=artlist + maxrecords + timespan + format=json.
+        TIMESPAN is an offset from now (not STARTDATETIME/ENDDATETIME, which looked identical).
+        Each request rotates the urban-Africa keyword set.
         """
         now = now_utc or datetime.now(timezone.utc)
         topics = VerdianPromptTemplates.GDELT_EMERGING_TOPIC_TERMS
-        groups = VerdianPromptTemplates.GDELT_AFRICA_SOURCECOUNTRY_GROUPS
         bucket = int(now.timestamp()) // VerdianPromptTemplates.GDELT_POLL_BUCKET_SEC
 
         if variant_index is None:
@@ -2376,25 +2401,19 @@ class VerdianPromptTemplates:
         else:
             idx = int(variant_index) % len(topics)
 
-        if country_group_index is None:
-            group_idx = bucket % len(groups)
-        else:
-            group_idx = int(country_group_index) % len(groups)
-
         n = max(1, min(250, int(max_records)))
-        query = VerdianPromptTemplates._gdelt_emerging_query_string(
-            topics[idx], groups[group_idx]
+        encoded_query = quote(
+            VerdianPromptTemplates._gdelt_emerging_query_string(topics[idx]),
+            safe="",
         )
-        encoded_query = quote(query, safe="")
-
-        end_dt = now.strftime("%Y%m%d%H%M%S")
-        start_dt = (now - timedelta(hours=24)).strftime("%Y%m%d%H%M%S")
+        timespan = VerdianPromptTemplates.GDELT_TIMESPAN
 
         url = (
             "https://api.gdeltproject.org/api/v2/doc/doc"
             f"?query={encoded_query}"
-            f"&mode=artlist&maxrecords={n}&format=json"
-            f"&sort=datedesc"
-            f"&startdatetime={start_dt}&enddatetime={end_dt}"
+            f"&mode=artlist"
+            f"&maxrecords={n}"
+            f"&timespan={timespan}"
+            f"&format=json"
         )
         return url, idx

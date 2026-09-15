@@ -8,28 +8,30 @@ from pydantic import BaseModel, Field, field_validator
 TrendType = Literal["risk", "trend"]
 TrendCategory = Literal[
     "Governance",
-    "Conflict",
+    "Infrastructure",
     "Economy",
     "Climate",
     "Security",
-    "Migration",
+    "Mobility",
     "Society",
     "Technology",
-    "Health",
+    "Housing",
+    "Environment",
 ]
 TrendStatus = Literal["Rising", "Active", "Watch", "Stable", "Critical"]
 TrendUrgency = Literal["low", "medium", "high", "critical"]
 TrendColor = Literal["green", "yellow", "orange", "red", "blue"]
 TrendIcon = Literal[
     "governance",
-    "conflict",
+    "infrastructure",
     "economy",
     "climate",
     "security",
-    "migration",
+    "mobility",
     "society",
     "technology",
-    "health",
+    "housing",
+    "environment",
 ]
 
 

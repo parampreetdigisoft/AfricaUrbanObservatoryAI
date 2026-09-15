@@ -104,7 +104,7 @@ class ScoreAnalyzerService:
             else "WHERE IsDeleted = 0"
         )
         return await self.db_service.engine.fetch_df_async(
-            f"Select CityID, CityName, State, Country from Cities {where}"
+            f"Select CityID, CityName, Region, Country from Cities {where}"
         )
 
 
@@ -281,7 +281,7 @@ class ScoreAnalyzerService:
 
                     ai_data = await self._ai.research_and_score_question(
                         city.CityName,
-                        f"State :{city.State}, Country :{city.Country}",
+                        f"Region :{city.Region}, Country :{city.Country}",
                         row.PillarID,
                         row.PillarName,
                         f" Question :{row.QuestionText}, Options :{row.Options}",
@@ -313,7 +313,7 @@ class ScoreAnalyzerService:
                         batch,
                         self.db_service.bulk_upsert_question_evaluations,
                     )
-
+                    await self.db_service.AiRecalculateCityScore(city.CityID)
                 except Exception as exc:
 
                     logger.error(
@@ -334,6 +334,8 @@ class ScoreAnalyzerService:
             await self.db_service.AiInsertAnalyticalLayerResults(
                 city_id
             )
+
+            await self.db_service.AiRecalculateCityScore(city.CityID)
 
         return True    
 
@@ -364,7 +366,7 @@ class ScoreAnalyzerService:
             try:
                 ai_data = await self._ai.research_and_score_pillar(
                     city.CityName,
-                    f"State :{city.State}, Country :{city.Country}",
+                    f"Region :{city.Region}, Country :{city.Country}",
                     row.PillarID,
                     row.PillarName,
                     row.QuestionWithScores,
@@ -443,7 +445,7 @@ class ScoreAnalyzerService:
             try:
                 ai_data = await self._ai.research_and_score_city(
                     city.CityName,
-                    f"State :{city.State}, Country :{city.Country}",
+                    f"Region :{city.Region}, Country :{city.Country}",
                     row.EvaluatorProgress,
                     row.AIScore,
                     row.PillarWithScores,

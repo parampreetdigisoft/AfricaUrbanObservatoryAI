@@ -76,7 +76,7 @@ def custom_openapi():
         }
     }
     
-    # Apply security globally to all endpoints except excluded ones
+    # Apply security  to all endpoints except excluded ones
     excluded_paths = ["/health", "/docs", "/redoc", "/openapi.json"]
     for path, path_item in openapi_schema["paths"].items():
         if path not in excluded_paths:
@@ -117,7 +117,7 @@ async def redoc_html():
     )
 
 
-# Global exception handler
+#  exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """

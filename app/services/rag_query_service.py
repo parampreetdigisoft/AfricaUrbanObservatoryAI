@@ -583,6 +583,8 @@ class RAGQueryService:
                 sourcecountry = str(a.get("sourcecountry", "")).strip()
                 if not VerdianPromptTemplates.is_african_news_article(title, sourcecountry):
                     continue
+                if not VerdianPromptTemplates.is_urban_relevant_article(title):
+                    continue
 
                 articles.append(
                     {
@@ -636,6 +638,12 @@ class RAGQueryService:
                         region=str(c.get("region", "")),
                         city=str(c.get("city", "")),
                         title=t,
+                    ):
+                        continue
+                    if not VerdianPromptTemplates.is_urban_relevant_article(
+                        t,
+                        city=str(c.get("city", "")),
+                        category=str(c.get("category", "")),
                     ):
                         continue
                     cleaned_cards.append(c)
@@ -716,33 +724,29 @@ class RAGQueryService:
         now_utc: Optional[datetime] = None,
     ) -> List[Dict[str, Any]]:
         """
-        One GDELT DOC 2.0 ArtList call (5s throttle). Unique URL per 2-minute poll.
-        Tries the next African sourcecountry group if the first returns nothing.
+        One GDELT DOC 2.0 ArtList call (5s throttle).
+        Short keyword + timespan query; tries the next keyword set if empty.
         """
         now = now_utc or datetime.now(timezone.utc)
         variant_count = VerdianPromptTemplates.gdelt_emerging_variant_count()
-        group_count = VerdianPromptTemplates.gdelt_africa_group_count()
         start_idx = (
             query_variant
             if query_variant is not None
             else VerdianPromptTemplates.pick_gdelt_emerging_variant_index()
         ) % variant_count
-        start_group = VerdianPromptTemplates.pick_gdelt_africa_group_index()
 
         last_error: Optional[Exception] = None
         max_tries = 2 if query_variant is None else 1
 
         for attempt in range(max_tries):
-            idx = start_idx
-            group_idx = (start_group + attempt) % group_count
+            idx = (start_idx + attempt) % variant_count
             gdelt_url, _ = VerdianPromptTemplates.emerging_trends_gdelt_url(
                 max_records,
                 variant_index=idx,
-                country_group_index=group_idx,
                 now_utc=now,
             )
             cache_key = (
-                f"emerging:africa-sc:{max_records}:{idx}:{group_idx}:"
+                f"emerging:africa:{max_records}:{idx}:"
                 f"{now.strftime('%Y%m%d%H%M')}"
             )
 
@@ -757,16 +761,19 @@ class RAGQueryService:
                         str(a.get("title", "")),
                         str(a.get("sourcecountry", "")),
                     )
+                    and VerdianPromptTemplates.is_urban_relevant_article(
+                        str(a.get("title", "")),
+                    )
                 ]
                 if african_hits:
                     return articles_raw
                 logger.warning(
-                    "GDELT country-group %s returned no African-outlet articles",
-                    group_idx,
+                    "GDELT topic %s returned no African urban articles",
+                    idx,
                 )
             except Exception as exc:
                 last_error = exc
-                logger.warning("GDELT fetch failed for country-group %s: %s", group_idx, exc)
+                logger.warning("GDELT fetch failed for topic %s: %s", idx, exc)
                 if attempt + 1 >= max_tries:
                     raise
 

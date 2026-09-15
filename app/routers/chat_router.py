@@ -165,19 +165,27 @@ async def ask_city_executive_slides(
     summary="African emerging trends and issues feed",
 )
 async def get_emerging_trends_and_issues(
-    cityCount: int = Query(
-        default=8,
+    cityCount: Optional[int] = Query(
+        default=None,
         ge=1,
         le=250,
         description="GDELT maxrecords (DOC 2.0 cap 250). Default 75 on GDELT; we send at least 75.",
+    ),
+    city_count: Optional[int] = Query(
+        default=None,
+        ge=1,
+        le=250,
+        include_in_schema=False,
+        description="Legacy query name used by older .NET callers.",
     ),
     queryVariant: Optional[int] = Query(
         default=None,
         ge=0,
         description=(
-            "Topic term index (0–7: urban, city, protest, flood, election, economy, health, security). "
-            "Omit to auto-rotate every 2 minutes. African sourcecountry batches also rotate every 2 minutes "
-            "so 2-min or 10-min polling does not send the same GDELT URL."
+            "Urban-Africa keyword index. Each request uses a different short QUERY "
+            "(Africa urban, African cities, housing, infrastructure, flood, municipality, "
+            "public transport, informal settlement). Uses timespan=1week — not start/end datetimes. "
+            "Omit to auto-rotate every 2 minutes."
         ),
     ),
 ):
@@ -188,7 +196,7 @@ async def get_emerging_trends_and_issues(
     """
     try:
         response = await chat_service.get_emerging_trends_and_issues(
-            city_count=cityCount,
+            city_count=cityCount or city_count or 8,
             query_variant=queryVariant,
         )
 
