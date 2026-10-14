@@ -361,9 +361,14 @@ class ScoreAnalyzerService:
 
         pillar_batch: list[dict[str, Any]] = []
         source_batch: list[dict[str, Any]] = []
+        descriptions = await self._load_pillar_descriptions()
 
         for row in df.itertuples(index=False):
             try:
+                description = descriptions.get(int(row.PillarID), "")
+                if not description:
+                    description = self._row_text(row, "Description", "PillarDescription")
+
                 ai_data = await self._ai.research_and_score_pillar(
                     city.CityName,
                     f"Region :{city.Region}, Country :{city.Country}",
@@ -372,6 +377,7 @@ class ScoreAnalyzerService:
                     row.QuestionWithScores,
                     row.EvaluatorProgress,
                     row.AIScore,
+                    pillar_description=description,
                 )
 
                 if not ai_data.get("success"):
@@ -493,7 +499,7 @@ class ScoreAnalyzerService:
             self.db_service.bulk_upsert_city_evaluations,
             force=True,
         )
-
+        await self.immediateSituation(city.CityID);
         await self.db_service.AiRecalculateCityScore(city.CityID)
 
         return True
@@ -569,6 +575,18 @@ class ScoreAnalyzerService:
             else:
                 ai_city_context = ""
 
+            try:
+                city_rows = await self.db_service.get_view_data(
+                    "vw_AiCityEvaluations",
+                    f"cityId = {city_id}",
+                )
+                if not city_rows.empty:
+                    pillar_text = getattr(next(city_rows.itertuples(index=False)), "PillarWithScores", "") or ""
+                    if pillar_text:
+                        ai_city_context = f"{ai_city_context}\n\nPILLAR ASSESSMENT:\n{pillar_text}"
+            except Exception as exc:
+                logger.warning("Pillar assessment was not added to the immediate situation: %s", exc)
+
             ai_data = await self._ai.immediate_situation(
                         city_name=city_Name,
                         country=country,
@@ -584,6 +602,40 @@ class ScoreAnalyzerService:
             
             return True
     
+    async def _load_pillar_descriptions(self) -> dict[int, str]:
+        """Official pillar descriptions from the existing Pillars table."""
+        try:
+            rows = await self.db_service.engine.fetch_dicts_async(
+                "SELECT PillarID, Description FROM Pillars"
+            )
+        except Exception as exc:
+            logger.warning("Official pillar descriptions were not loaded: %s", exc)
+            return {}
+
+        descriptions: dict[int, str] = {}
+        for item in rows or []:
+            pillar_id = item.get("PillarID")
+            if pillar_id is None:
+                continue
+            text = item.get("Description")
+            if text is None:
+                continue
+            descriptions[int(pillar_id)] = str(text).strip()
+        return descriptions
+
+    @staticmethod
+    def _row_text(row: Any, *names: str) -> str:
+        for name in names:
+            value = getattr(row, name, None)
+            if value is None:
+                continue
+            if isinstance(value, float) and math.isnan(value):
+                continue
+            text = str(value).strip()
+            if text and text.lower() not in {"none", "nan"}:
+                return text
+        return ""
+
     def _build_pillar_record( self, row: Any,ai_data: dict[str, Any], city_id: int,) -> dict[str, Any]:
         """Build pillar evaluation record."""
 
@@ -633,6 +685,8 @@ class ScoreAnalyzerService:
                 "key_developments": ai.get("key_developments", "Unknown"),
                 "critical_risks": ai.get("critical_risks"),
                 "gaps": ai.get("gaps"),
+                "key_findings": ai.get("key_findings") or "",
+                "recommendations": ai.get("recommendations") or "",
                 "executive_summary": summary if isinstance(summary, str) and len(summary) > 50 else ""
             }
 

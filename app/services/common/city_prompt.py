@@ -101,7 +101,66 @@ class VerdianPromptTemplates:
         - Use clear, concise, evidence-based statements
         - No bullet points or lists inside JSON string values
     """
+    @staticmethod
+    def _clip_prompt_text(text: Optional[str], limit: int = 12000) -> str:
+        if not text:
+            return ""
+        return str(text).replace("{", "(").replace("}", ")")[:limit]
 
+    @staticmethod
+    def _finding_and_recommendation_standard() -> str:
+        """City findings and recommendations. Style follows the client standard; facts must come from the supplied assessment."""
+        return """
+        --------------------------------------------------
+        KEY FINDINGS AND RECOMMENDATIONS
+        --------------------------------------------------
+        The completed assessment is the evidence.
+        Narrative pages describe. key_findings must judge what the evidence means,
+        where it disagrees, and what to do next.
+        recommendations answer those findings. Do not copy facts from any example city.
+
+        NEVER write a score, percentage, rank, index value, pillar count, or indicator count
+        in key_findings, recommendations, gaps, summary, key_developments, critical_risks,
+        or executive_summary. Platform scores change, and these sentences cannot be updated
+        one by one. Describe strength, weakness, peer position, and data reliability in words.
+        Name a pillar by its exact supplied title. Do not say how many pillars or indicators exist.
+
+        Produce EXACTLY 6 key_findings and EXACTLY 6 recommendations.
+        They are paired: recommendation N answers finding N.
+        Write each item as one natural paragraph. Do not print the labels
+        Statement, Evidence, Meaning, Gap, or Link.
+
+        Each finding must still follow this order:
+        1. Statement. One sentence on the condition, with no number.
+        2. Evidence. Two or three facts from the supplied assessment, with no scores or counts.
+        3. Meaning. Why it matters, and for whom.
+        4. Gap. What is missing or broken, stated plainly.
+        5. Link. Name the recommendation that answers it, such as "Recommendation 1 answers this finding."
+
+        Cover these judgments, in this order, and skip a topic only by saying the evidence is missing:
+        1) Headline result: overall standing, peer position, and data reliability, in words only.
+        2) Pillar pattern: where performance is broad and which pillars are outliers. Use the exact supplied pillar title.
+        3) Delivery pattern: where planning or governance is stronger than delivery, only when the narratives support it.
+        4) Cross-cutting pattern: who bears the weaker outcomes, and the system dynamic that connects them, only when both narratives support it.
+        5) Contradiction or data quality: if the narrative treats a subject as both a strength and a weakness, say so without quoting a score. A weak reading caused by missing or weak data is a measurement gap, not a city failure.
+        6) Opportunity: where the city is strong enough to build on, and where an unmet need is an opening.
+
+        Three rules:
+        - Interpret the evidence. Do not restate a chart in words.
+        - If two parts of the narrative disagree, keep the disagreement visible without using a number.
+        - Separate city performance from data quality.
+        Do not invent neighbourhoods, organizations, programs, or budgets.
+        Target 90-130 words per finding.
+
+        Each recommendation is one paragraph of 90-130 words and must name:
+        - the finding it answers
+        - the action
+        - the type of entity that could act, such as a municipal authority, planning agency, government department, service provider, transit operator, business, community organization, or development partner
+        - a practical timeframe
+        - the intended improvement, in words, with no numeric target
+        Prefer finishing work the assessment already shows is underway, in the places the evidence says need it most.
+        Do not present a proposal as an existing policy.
+        """
     # ================================================================== #
     #  QUESTION-level prompt                                              #
     # ================================================================== #
@@ -337,7 +396,9 @@ class VerdianPromptTemplates:
     year: int,
     evaluator_context: str,
     ai_input_context: str,
-    pillar_context: str
+    pillar_context: str,
+    pillar_id=None,
+    pillar_description: str = "",
 ) -> str:
         """Get optimized system prompt for pillar-level research"""
 
@@ -352,6 +413,11 @@ class VerdianPromptTemplates:
         pillar_context_safe = escape_braces(pillar_context)
         evaluator_context_safe = escape_braces(evaluator_context)
         ai_input_context_safe = escape_braces(ai_input_context)
+        pillar_description_safe = escape_braces(pillar_description) or (
+            "No separate database description was supplied. "
+            "The pillar focus areas below are the official scope for this PillarID."
+        )
+        pillar_id_safe = pillar_id if pillar_id is not None else "as supplied in the user message"
 
         output_style_safe = escape_braces(
             VerdianPromptTemplates._OUTPUT_STYLE
@@ -365,7 +431,25 @@ class VerdianPromptTemplates:
     You are an expert urban analyst for the African Urban Index.
 
     YOUR MISSION:
-    Conduct independent research and provide evidence-based scoring for a city pillar.
+    Conduct independent research and provide evidence-based scoring for one assigned city pillar.
+
+    ASSIGNED PILLAR — this is the only subject
+    City: {city_name}
+    Assessment year: {year}
+    PillarID: {pillar_id_safe}
+    Exact title: {pillar_name}
+
+    Official pillar description (primary scope):
+    {pillar_description_safe}
+
+    Write the narrative, key findings, and recommendations only for this PillarID, this title, and this description.
+    Discuss the topics, issues, and objectives in that description.
+    Do not replace this analysis with material from another pillar.
+    A cross-pillar point is allowed only when the supplied evidence makes the link direct, and it must be identified as cross-pillar context.
+    Do not invent facts, statistics, policies, programs, institutions, or conclusions.
+    If the evidence is missing, contradictory, or outdated, say so.
+    Keep ai_score and ai_progress in their numeric fields only.
+    Do not write scores, percentages, ranks, KPI counts, or indicator counts in evidence_summary, red_flag, geographic_equity_note, institutional_assessment, data_gap_analysis, or analyst_data_gap_analysis.
 
     The scoring system MUST combine:
     1. Structural and institutional indicators
@@ -398,10 +482,9 @@ class VerdianPromptTemplates:
 
     Dynamic Real-Time Sources:
     - "{city_name} {pillar_name} latest news"
-    - "{city_name} protests complaints reactions social media"
-    - "{city_name} disruption unrest outage strike violence emergency"
-    - verified civic reporting
-    - credible journalist updates
+    - "{city_name} {pillar_name} {year}"
+    - credible reporting on the topics named in the official pillar description
+    - verified civic reporting that falls inside that description
 
     --------------------------------------------------
 
@@ -456,17 +539,8 @@ class VerdianPromptTemplates:
 
     REAL-TIME SIGNAL ANALYSIS
 
-    Evaluate:
-    - protests
-    - unrest
-    - violence
-    - strikes
-    - shutdowns
-    - infrastructure failures
-    - governance scandals
-    - emergency incidents
-    - complaint spikes
-    - escalation patterns
+    se a live signal only when it falls inside the official pillar description.
+    Do not import protests, policing, sanitation, housing, health, employment, heritage, ecology, or governance unless that topic is part of this pillar's description.
 
     Distinguish:
     - credible evidence vs misinformation
@@ -498,6 +572,34 @@ class VerdianPromptTemplates:
 
     --------------------------------------------------
 
+    NARRATIVE, KEY FINDINGS, AND RECOMMENDATIONS
+
+    evidence_summary is the pillar narrative.
+    - Follow the official description. A reader should be able to tell which pillar this is without seeing the heading.
+    - Explain what the supplied evidence shows about the city's current situation and why it matters.
+    - Do not write a generic city essay that would fit an unrelated pillar.
+    - Do not use a score or a count as the story.
+
+    red_flag is the key-findings text for this same pillar.
+    - State the important conditions, strengths, weaknesses, challenges, or gaps that the evidence actually supports.
+    - Every finding must belong to this pillar's official description.
+    - Explain what the evidence indicates and why it matters to decision-makers.
+    - Do not add findings just to reach a fixed number.
+    - Do not repeat the same point in different words.
+    - Do not use scores, percentages, ranks, or indicator counts.
+    - If the evidence does not support an issue, do not imply that the issue exists.
+    - If evidence is thin, say what is missing.
+
+    institutional_assessment is the recommendations text for this same pillar.
+    - Each action must answer a finding or a gap in red_flag or data_gap_analysis.
+    - Say what should be done, which type of entity could reasonably do it, and what improvement is intended.
+    - Choose only entities that fit the finding, such as a municipal authority, urban planning agency, government department, service provider, business, community organization, or development partner.
+    - Do not copy the same recommendation into every pillar.
+    - Do not present a proposed action as an existing government commitment or policy.
+    - Do not invent organizations, programs, budgets, or implementation detail.
+    - Do not include scores or indicator counts.
+
+    --------------------------------------------------
     Scoring Rubric (0-4 scale):
 
     **4.0 (Excellent)**:
@@ -553,7 +655,8 @@ class VerdianPromptTemplates:
 
     CONTEXT PROVIDED
 
-    Pillar Focus Areas:
+    Pillar focus areas for this PillarID.
+    If these focus areas conflict with the official pillar description, follow the official description.
     {pillar_context_safe}
 
     Reference Scores:
@@ -578,7 +681,7 @@ class VerdianPromptTemplates:
         "ai_score": <0-4>,
         "ai_progress": <0-100>,
         "confidence_level": "<High|Medium|Low>",
-        "evidence_summary": "MAX 300 words",
+        "evidence_summary": "MAX 300 words. Narrative for this PillarID only, following the official description. No scores, percentages, ranks, or counts.",
 
         "sources": [
             {{{{
@@ -598,10 +701,9 @@ class VerdianPromptTemplates:
                 "data_extract": "Recent development"
             }}}}
         ],
-
-        "red_flag": "150-200 words",
-        "geographic_equity_note": "150-200 words",
-        "institutional_assessment": "150-200 words",
+        "red_flag": "150-200 words. Key findings for this pillar only. What the evidence shows and why it matters. No scores or counts.",
+        "geographic_equity_note": "150-200 words. Place or group differences only where they fall inside this pillar's description.",
+        "institutional_assessment": "150-200 words. Practical recommendations tied to the findings. Name the entity type, the action, and the intended improvement. No scores or counts.",
         "data_gap_analysis": "150-200 words",
         "analyst_data_gap_analysis": "150-200 words"
     }}}}
@@ -613,11 +715,11 @@ class VerdianPromptTemplates:
     - ai_score must be between 0 and 4
     - ai_progress must be between 0 and 100
     - Include 2 to 8 sources when possible
-    - Include recent sources for live risks
-    - Reflect verified risks in scoring
+    - Include recent sources only when they concern this pillar
+    - Reflect verified risks in the numeric score fields
     - Do not rely solely on social media
-    - Keep language readable for general audiences
-
+    - Keep evidence_summary, red_flag, and institutional_assessment on this pillar's official description
+    - Keep language readable for decision-makers
     {json_rules_safe}
 
     {output_style_safe}
@@ -662,7 +764,7 @@ class VerdianPromptTemplates:
     You are conducting a comprehensive city-wide African Urban Index (AUI) assessment for decision-makers, investors, and policymakers.
 
     MISSION:
-    Synthesize evidence across all 14 pillars to produce a structured, decision-grade urban assessment.
+    Synthesize evidence across the supplied pillars to produce a structured, decision-grade urban assessment.
 
     --------------------------------------------------
 
@@ -695,14 +797,10 @@ class VerdianPromptTemplates:
 
     STEP 3 — CROSS-PILLAR INTEGRATION
 
-    Examine:
-    - Housing ↔ Transportation
-    - Climate ↔ Inequality
-    - Digital access ↔ Education
-    - Governance ↔ Investment climate
-    - Infrastructure ↔ Urban expansion
-
-    Identify whether weaknesses are isolated or systemic.
+    Keep each supplied pillar narrative with the pillar title it was given.
+    Do not move a housing finding under health, a heritage finding under conflict, or any other subject under the wrong title.
+    Discuss a relationship between pillars only when both supplied narratives support that relationship, and label it as cross-pillar context.
+    Identify whether a weakness is isolated or systemic from that evidence.
 
     --------------------------------------------------
 
@@ -726,34 +824,16 @@ class VerdianPromptTemplates:
 
     --------------------------------------------------
 
-    STEP 5 — RISK AND OPPORTUNITY DETECTION
+     STEP 5 — STRATEGIC RECOMMENDATIONS
 
-    Housing Reform:
-    - housing score < 70
-    - affordability stress
-    - rapid growth
+    Draw strategic_recommendation from the supplied pillar narratives and their official subjects.
+    Do not use numeric scores, score thresholds, percentages, ranks, or indicator counts in any prose field.
+    Explain the condition the evidence shows and why it matters, then answer it.
+    Name the type of entity that could act, the action, and the intended improvement.
+    Do not present a proposed action as an existing government commitment.
+    Do not invent organizations, programs, or budgets.
+    City-level key findings and recommendations are written later. Do not include them in this response.
 
-    Climate Resilience:
-    - hazard score < 75
-    - rising exposure
-
-    Inclusive Economy:
-    - employment score < 70
-    - inequality high
-
-    Infrastructure:
-    - infrastructure score < 75
-    - service gaps
-
-    Social Cohesion:
-    - civic resilience score < 70
-    - displacement patterns
-
-    Rank recommendations by:
-    - severity
-    - cross-pillar impact
-    - long-term stability
-    - feasibility
 
     --------------------------------------------------
 
@@ -817,8 +897,9 @@ class VerdianPromptTemplates:
     You MUST begin the paragraph using the EXACT sentence structure below. Do not change wording, order, or phrasing except for placeholders:   
 
     Rules:
-    - Do NOT mention scores, percentages, pillars, KPIs, rankings, or benchmark values.
-    - Do NOT reference numerical performance indicators in the opening sentence.
+    - Do NOT mention scores, percentages, pillars by count, KPIs, rankings, or benchmark values.
+    - Do NOT reference numerical performance indicators.
+    - When a pillar is named, use the exact title supplied in the pillar synthesis context and keep the point inside that pillar's subject.
     - Keep the tone analytical and neutral.
     - After this sentence, continue naturally to complete a single paragraph (~60 words total).
     - The paragraph must clearly answer: How well is this city functioning overall?
@@ -882,7 +963,7 @@ class VerdianPromptTemplates:
 
          "peer_comparison": "<MAX 200 words, ASCII only. Explicitly name the peer group used for comparison: same income classification, same African subregion, same population bracket. State the city's relative position — above, at, or below peer average — for overall performance and for 2-3 key pillars. Use concrete framing: 'Among lower-middle-income cities in East Africa with populations between 2-5 million, Nairobi performs above the regional median in digital readiness and services employment, but below peer average in housing affordability and climate resilience.' This section must make the comparative logic visible and credible.>",
 
-         "evidence_summary": "<550-700 words, ASCII only. Follow the mandatory 8-section Executive Summary structure exactly as defined above. Write in continuous prose — no section headers, no bullet points, no numbered lists. The 4 sections must flow as a coherent narrative that answers: (1) How well is this city functioning? (2) What are the biggest risks in the next decade? (3) Where should policy or investment focus first? Sections in order: City Score and Overview, System Diagnosis, Strategic Strengths, Structural Risks.>",
+         "evidence_summary": "<550-700 words, ASCII only. Follow the mandatory 8-section Executive Summary structure exactly as defined above. Write in continuous prose — no section headers, no bullet points, no numbered lists. Do not mention scores, percentages, ranks, pillar counts, or indicator counts. The 4 sections must flow as a coherent narrative that answers: (1) How well is this city functioning? (2) What are the biggest risks in the next decade? (3) Where should policy or investment focus first? Sections in order: City Overview, System Diagnosis, Strategic Strengths, Structural Risks.>",
 
          "source": "<List Tier 5-7 sources used, comma-separated. Prioritize UN-Habitat, World Bank, OECD, city master plans, municipal reports>",
 
@@ -906,19 +987,15 @@ class VerdianPromptTemplates:
 
         "sustainability_outlook": "<MAX 200 words, ASCII only. Assess the city's trajectory over the next 5-10 years. Is performance improving, stable, or declining? Which pillars show positive momentum? Which are deteriorating? What structural factors will shape the city's long-term resilience?>",
 
-        "strategic_recommendation": "<MAX 200 words, ASCII only. 
-                State exactly three strategic priorities derived from the risk and threshold logic in Step 5.
-                Rank them: Priority 1 (most urgent), Priority 2, Priority 3.
-                Each priority must name the policy domain, the core problem, and the direction of action.
-                Write as a single paragraph — not a numbered list.
-                This section must answer: Where should policy or investment focus first?>",
+        "strategic_recommendation": "<MAX 200 words, ASCII only. Practical recommendations drawn from the supplied pillar findings. For each action, name the pillar title it answers, what should be done, the type of entity that could act, and the intended improvement. Do not include scores, percentages, ranks, or indicator counts. Do not present a proposal as an existing policy. Write in prose.>",
+
 
         "data_transparency_note": "<MAX 150 words, ASCII only.
 
                     WHY THIS ASSESSMENT MATTERS
 
                     Close by explaining the value of the AUI assessment itself for this city.
-                    Reference the integration of 14 policy pillars and 110 indicators.
+                    Do not mention scores, percentages, ranks, pillar counts, or indicator counts.
                     Connect economic competitiveness, sustainability, governance, and social stability.
                     Frame the report as decision intelligence — not a scorecard, but a system-level
                     diagnostic tool for policymakers, investors, and development institutions.>"
@@ -954,6 +1031,8 @@ class VerdianPromptTemplates:
     # ================================================================== #
     @staticmethod
     def city_summery_system_prompt(publicContext: str, documentContext: str) -> str:
+        publicContext = VerdianPromptTemplates._clip_prompt_text(publicContext, 12000)
+        documentContext = VerdianPromptTemplates._clip_prompt_text(documentContext, 8000)
         return f"""
         You are a lead analyst for the African Urban Index(AUI).
         You produce city-level executive assessments grounded in both uploaded local context
@@ -983,21 +1062,25 @@ class VerdianPromptTemplates:
         Step 2: Expand and validate using relevant public knowledge.
         Step 3: Identify key developments, risks, and gaps surfaced by the data.
         Step 4: Synthesize cross-pillar patterns and system-level insights.
-        Step 5: Generate the structured executive outputs below.
+        Step 5: Judge the completed assessment. Write key findings, then the recommendations that answer them.
+        Step 6: Generate the structured outputs below. Put key_findings and recommendations LAST.
 
+        {VerdianPromptTemplates._finding_and_recommendation_standard()}
         -----------------------------------------
         OUTPUT REQUIREMENTS
         -----------------------------------------
-        Return ONLY valid JSON (no markdown, no explanation):
+        Return ONLY valid JSON (no markdown, no explanation). Close every brace. Never truncate.:
 
         {{
             "immediateSituation": {{
                 "summary": "<150-220 words. Concise executive memo providing immediate situational awareness. Must read like a daily/weekly decision brief — highlight what is happening now, what is changing, and what requires immediate attention. Not a generic summary.>",
                 "key_developments": "<Single string. Exactly 3 items. Format strictly: 1) <item> || 2) <item> || 3) <item>. Headline-style. Major recent events or changes surfaced by the data.>",
                 "critical_risks": "<Single string. Exactly 3 items. Format strictly: 1) <item> || 2) <item> || 3) <item>. Focus on urgency, escalation potential, and impact.>",
-                "gaps": "<Single string. Exactly 3 items. Format strictly: 1) <item> || 2) <item> || 3) <item>. Missing capacity, weak response mechanisms, or data blind spots.>"
+                "gaps": "<Single string. Exactly 3 items. Format strictly: 1) <gap, evidence, where it bites, priority Critical or High or Medium> || 2) <item> || 3) <item>. No scores, percentages, ranks, pillar counts, or indicator counts. Rank by how much the gap threatens the city. Separate a measurement gap from a performance gap.>"
             }},
-            "executive_summary": "<550-700 words, ASCII only. Flowing prose. No headers, no bullet points. Four sections in strict order: City Overview, System Diagnosis, Strategic Strengths, Structural Risks.>"
+            "executive_summary": "<550-700 words, ASCII only. Flowing prose. No headers, no bullet points. Four sections in strict order: City Overview, System Diagnosis, Strategic Strengths, Structural Risks.>",
+            "key_findings": "<Exactly 6 numbered paragraphs. 1) <90-130 words: condition with no score, percentage, rank, pillar count, or indicator count, then evidence, meaning, gap, and the recommendation that answers it. No field labels.>\\n2) ...\\n3) ...\\n4) ...\\n5) ...\\n6) ...>",
+            "recommendations": "<Exactly 6 numbered paragraphs, paired with the findings. 1) <90-130 words: the finding it answers, the action, the type of entity that could act, a timeframe, and the intended improvement. No scores, percentages, ranks, pillar counts, indicator counts, or numeric targets. Do not present it as existing policy.>\\n2) ...\\n3) ...\\n4) ...\\n5) ...\\n6) ...>"
         }}
 
         -----------------------------------------
@@ -1007,7 +1090,10 @@ class VerdianPromptTemplates:
         - Each MUST contain exactly 3 numbered items.
         - Use ONLY "||" as the separator. No bullet points, no newlines, no extra separators.
         - Each item: 1-2 sentences maximum.
-        - No newline characters anywhere in the string.
+        - No newline characters anywhere in those three strings.
+        - key_findings and recommendations are single strings of exactly 6 paragraphs.
+        - Use \\n before 2) 3) 4) 5) 6). Do not use field labels or markdown bullets.
+
 
         -----------------------------------------
         EXECUTIVE SUMMARY FRAMEWORK (STRICT)
@@ -1046,14 +1132,24 @@ class VerdianPromptTemplates:
     #  Produces a real-time brief based on public data only.              #
     # ================================================================== #
     @staticmethod
-    def city_situation_awareness_system_prompt(pillar_list_str: str) -> str:
+    def city_situation_awareness_system_prompt(pillar_list_str: str, assessment_context: str = "") -> str:
+        assessment_context = VerdianPromptTemplates._clip_prompt_text(assessment_context, 12000)
+        pillar_list_str = VerdianPromptTemplates._clip_prompt_text(pillar_list_str, 4000)
         return f"""
         You are a lead analyst for the African Urban Index (AUI).
 
         Your task is to produce a REAL-TIME situational awareness brief for a city
         based on the most current publicly available information.
 
-        This is NOT a full assessment. It is a concise executive memo focused on CURRENT conditions.
+        The immediate situation is a concise executive memo focused on CURRENT conditions.
+        key_findings and recommendations judge the completed assessment supplied below.
+        If that assessment is empty, say the assessment evidence was not supplied.
+        Do not mention scores, percentages, ranks, pillar counts, or indicator counts in any written field.
+
+        -----------------------------------------
+        COMPLETED ASSESSMENT
+        -----------------------------------------
+        {assessment_context}
 
         -----------------------------------------
         SCOPE & PRIORITY (CRITICAL)
@@ -1065,6 +1161,8 @@ class VerdianPromptTemplates:
         * What has changed recently
         * What requires immediate attention
         - Do NOT provide historical analysis unless it is directly relevant to a current development.
+        - Those limits apply to summary, key_developments, and critical_risks.
+        - key_findings, recommendations, and gaps judge the completed assessment supplied above.
 
         -----------------------------------------
         PILLAR COVERAGE
@@ -1078,20 +1176,23 @@ class VerdianPromptTemplates:
         Step 1: Identify the latest developments across political, economic, social, and security domains.
         Step 2: Detect emerging risks or escalation signals.
         Step 3: Identify critical gaps — in capacity, governance response, or available data.
-        Step 4: Synthesise findings into a concise executive-level situational brief.
+        Step 4: Judge the completed assessment and write key findings, then the recommendations that answer them.
 
+        {VerdianPromptTemplates._finding_and_recommendation_standard()}
         -----------------------------------------
         OUTPUT REQUIREMENTS
         -----------------------------------------
-        Return ONLY valid JSON (no markdown, no explanation):
+        Return ONLY valid JSON (no markdown, no explanation). Close every brace. Never truncate.:
 
         {{
             "immediateSituation": {{
                 "summary": "<150-220 words. Executive memo focused entirely on the CURRENT situation and recent changes. Must read like a daily/weekly decision brief — what is happening, what has shifted, what requires attention. Not a generic background summary.>",
                 "key_developments": "<Single string. Exactly 3 items. Format strictly: 1) <item> || 2) <item> || 3) <item>. Headline-style. Specific, recent events or changes.>",
                 "critical_risks": "<Single string. Exactly 3 items. Format strictly: 1) <item> || 2) <item> || 3) <item>. Focus on escalation, instability, or emerging threats. Prioritise urgency.>",
-                "gaps": "<Single string. Exactly 3 items. Format strictly: 1) <item> || 2) <item> || 3) <item>. Missing capacity, weak response mechanisms, or structural blind spots.>"
-            }}
+                "gaps": "<Single string. Exactly 3 items. Format strictly: 1) <gap, evidence, where it bites, priority Critical or High or Medium> || 2) <item> || 3) <item>. No scores, percentages, ranks, pillar counts, or indicator counts. Rank by how much the gap threatens the city. Separate a measurement gap from a performance gap.>"
+            }},
+            "key_findings": "<Exactly 6 numbered paragraphs drawn from the completed assessment. 1) <90-130 words: condition with no score, percentage, rank, pillar count, or indicator count, then evidence, meaning, gap, and the recommendation that answers it. No field labels.>\\n2) ...\\n3) ...\\n4) ...\\n5) ...\\n6) ...>",
+            "recommendations": "<Exactly 6 numbered paragraphs, paired with the findings. 1) <90-130 words: the finding it answers, the action, the type of entity that could act, a timeframe, and the intended improvement. No scores, percentages, ranks, pillar counts, indicator counts, or numeric targets. Do not present it as existing policy.>\\n2) ...\\n3) ...\\n4) ...\\n5) ...\\n6) ...>"
         }}
 
         -----------------------------------------
@@ -1099,9 +1200,12 @@ class VerdianPromptTemplates:
         -----------------------------------------
         - key_developments, critical_risks, and gaps MUST be single string values — NOT arrays.
         - Each MUST contain exactly 3 numbered items.
-        - Use ONLY "||" as the separator. No bullet points, no newlines, no extra separators.
-        - Each item: 1-2 sentences maximum.
-        - No newline characters anywhere in the string.
+        - Use ONLY "||" as the separator inside those three strings. No bullet points and no extra separators.
+        - Each of those items: 1-2 sentences maximum.
+        - No newline characters inside key_developments, critical_risks, or gaps.
+        - key_findings and recommendations are single strings of exactly 6 paragraphs.
+        - Use \\n before 2) 3) 4) 5) 6). Do not use field labels or markdown bullets.
+
 
         -----------------------------------------
         STYLE RULES

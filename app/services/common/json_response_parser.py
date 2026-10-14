@@ -465,6 +465,8 @@ def map_city_response(
         "SustainabilityOutlook": analysis.get("sustainability_outlook", ""),
         "StrategicRecommendation": analysis.get("strategic_recommendation", ""),
         "DataTransparencyNote": analysis.get("data_transparency_note", ""),
+        "KeyFindings": _as_prose(analysis.get("key_findings")),
+        "Recommendations": _as_prose(analysis.get("recommendations")),
     }
 
 def build_immediateSituation_record(ai: dict) -> Dict[str, Any]:
@@ -475,12 +477,33 @@ def build_immediateSituation_record(ai: dict) -> Dict[str, Any]:
         "key_developments": immediate.get("key_developments", ""),
         "critical_risks": immediate.get("critical_risks", ""),
         "gaps": immediate.get("gaps", ""),
-        "executive_summary": ai.get("executive_summary", "")
+        "executive_summary": ai.get("executive_summary", ""),
+        "key_findings": ai.get("key_findings", ""),
+        "recommendations": ai.get("recommendations", ""),
     }
 
 # ====================================================================== #
 #  Internal helpers                                                      #
 # ====================================================================== #
+def _as_prose(value: Any) -> str:
+    """Keep a narrative string, or join a list of finding or recommendation objects."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+            elif isinstance(item, dict):
+                title = str(item.get("title") or "").strip()
+                description = str(item.get("description") or item.get("text") or "").strip()
+                text = " ".join(part for part in (title, description) if part)
+                if text:
+                    parts.append(text)
+        return "\n\n".join(parts)
+    return str(value).strip()
 
 def _require_fields(data: Dict, fields: list[str]) -> None:
     for field in fields:

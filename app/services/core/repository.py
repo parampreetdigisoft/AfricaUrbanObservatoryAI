@@ -160,7 +160,27 @@ class DatabaseRepository:
             "EXEC usp_AiBulkUpsertCityEvaluations @CityEvaluations = ?",
             (records,),
         )
+        await self._save_city_findings(rows)
 
+    async def _save_city_findings(self, rows: List[Dict]) -> None:
+        """Write key findings and recommendations without changing the existing upsert contract."""
+        query = """
+            UPDATE AICityScores
+            SET KeyFindings = ?, Recommendations = ?
+            WHERE CityID = ? AND Year = ?
+        """
+        for row in rows:
+            if "KeyFindings" not in row and "Recommendations" not in row:
+                continue
+            await self.engine.execute_write_async(
+                query,
+                (
+                    row.get("KeyFindings") or "",
+                    row.get("Recommendations") or "",
+                    int(row["CityID"]),
+                    int(row["Year"]),
+                ),
+            )
     # ------------------------------------------------------------------
     # Document TOC
     # ------------------------------------------------------------------
@@ -328,6 +348,8 @@ class DatabaseRepository:
                 KeyDevelopments = ?,
                 CriticalRisks = ?,
                 Gaps = ?,
+                KeyFindings = ?,
+                Recommendations = ?,
                 EvidenceSummary = CASE 
                     WHEN ? IS NOT NULL AND LTRIM(RTRIM(CAST(? AS NVARCHAR(MAX)))) <> '' 
                     THEN ? 
@@ -344,6 +366,8 @@ class DatabaseRepository:
             record.get("key_developments"),
             record.get("critical_risks"),
             record.get("gaps"),
+            record.get("key_findings"),
+            record.get("recommendations"),
             exec_summary,   # check NULL
             exec_summary,   # check empty
             exec_summary,   # value to update

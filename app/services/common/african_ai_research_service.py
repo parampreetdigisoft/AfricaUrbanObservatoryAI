@@ -163,7 +163,8 @@ class VerdianAIResearchService:
         questions_context: str = None,
         evaluator_score: Optional[float] = None,
         aIScore: Optional[float] = None,
-        year: int = None
+        year: int = None,
+        pillar_description: str = None,
     ) -> Dict[str, Any]:
         """
         Conduct independent research for an entire pillar with comprehensive web search.
@@ -205,20 +206,40 @@ class VerdianAIResearchService:
             )
             
             # Create the prompt
+            evidence_context = (questions_context or "No pillar evidence was supplied.").strip()
+            if len(evidence_context) > 8000:
+                evidence_context = evidence_context[:8000]
+            official_description = (pillar_description or "").strip()
+
             prompt = ChatPromptTemplate.from_messages([
-                ("system",VerdianPromptTemplates._get_pillar_system_prompt(self, city_name, pillar_name, year, evaluator_context, ai_input_context, pillar_context)),
+                ("system", VerdianPromptTemplates._get_pillar_system_prompt(
+                    self,
+                    city_name,
+                    pillar_name,
+                    year,
+                    evaluator_context,
+                    ai_input_context,
+                    pillar_context,
+                    pillar_id=pillarId,
+                    pillar_description=official_description,
+                )),
                 (
                     "user",
-                    """Research and score the following pillar:
+                    """Research and score only the assigned pillar.
 
                     City: {city_name}
                     Full Address: {city_address}
-                    Pillar: {pillar_name}
+                    PillarID: {pillar_id}
+                    Exact title: {pillar_name}
                     Assessment Year: {year}
 
-                    Conduct comprehensive web research using the search strategies outlined above. Find real evidence from trustworthy sources and provide your independent scoring with clear justification.
+                    Official pillar description. The narrative, key findings, and recommendations must follow this description:
+                    {pillar_description}
 
-                    Remember: Search for official data, government reports, international organization data, and academic research. Provide verifiable evidence-based scoring."""
+                    Evidence already assembled for this pillar. Use the issues it contains. Do not copy numeric scores, percentages, ranks, or indicator counts into the written fields:
+                    {questions_context}
+
+                    Search for official data, government reports, international organization data, and academic research about this pillar's description."""
                 )
             ])
             
@@ -231,10 +252,10 @@ class VerdianAIResearchService:
                         "city_name": city_name,
                         "city_address": city_address,
                         "pillar_name": pillar_name,
+                        "pillar_id": pillarId,
+                        "pillar_description": official_description or "Use the pillar focus areas in the system prompt as the official scope.",
+                        "questions_context": evidence_context,
                         "year": year,
-                        "pillar_context": pillar_context,
-                        "ai_input_context": ai_input_context,
-                        "evaluator_context": evaluator_context
                     })
                     
                     if not result or result.strip() == "{}":
@@ -315,7 +336,10 @@ class VerdianAIResearchService:
                 aIScore:{aIScore}
                 {evaluator_context}
 
-                SEARCH THE WEB comprehensively for city-level data. Synthesize findings across all 14 pillars. Provide holistic African Urban Index evaluation with clear evidence.""")
+                Use the supplied pillar narratives as the source for the city narrative and strategic recommendations.
+                Keep each point with the pillar title it belongs to.
+                Do not write scores, percentages, ranks, or indicator counts in the prose fields.
+                Strategic recommendations must name the action, the type of entity that could act, and the intended improvement.""")
             ])
 
             evaluator_context = ""
@@ -389,7 +413,8 @@ class VerdianAIResearchService:
 
                 system_prompt = (
                     VerdianPromptTemplates.city_situation_awareness_system_prompt(
-                        pillar_list_str
+                        pillar_list_str,
+                        assessment_context=ai_city_context,
                     )
                 )
             else:
